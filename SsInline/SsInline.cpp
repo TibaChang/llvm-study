@@ -38,130 +38,61 @@ bool SsInline::runOnModule(Module &M) {
 
   auto &CTX = M.getContext();
 
-  // STEP 1: For each function in the module, inject a call-counting code
-  // --------------------------------------------------------------------
+  Function *Caller;
+  Function *Callee;
   for (auto &F : M) {
     if (F.isDeclaration())
       continue;
 
-    // Get an IR builder. Sets the insertion point to the top of the function
-    IRBuilder<> Builder(&*F.getEntryBlock().getFirstInsertionPt());
+    for (auto &BB : F) {
+      for (auto &Instr : BB) {
+        if (CallInst *callInst = dyn_cast<CallInst>(&Instr)) {
+          if (Function *calledFunction = callInst->getCalledFunction()) {
+            if (calledFunction->getName().startswith("foo")) {
+              Caller = &F;
+              Callee = calledFunction;
+              LLVM_DEBUG(dbgs() << "Caller: " << Caller->getName() << "; Callee: " << Callee->getName() << "\n");
+              //TODO: a function can be callee for multiple caller
+            }
+          }
+        }
+      }
+    }
+  }
+  LLVM_DEBUG(dbgs() << "Tmp Caller: " << Caller->getName() << "; Tmp Callee: " << Callee->getName() << "\n");
 
-    // Create a global variable to count the calls to this function
-    std::string CounterName = "CounterFor_" + std::string(F.getName());
-    Constant *Var = CreateGlobalCounter(M, CounterName);
-    CallCounterMap[F.getName()] = Var;
-
-    // Create a global variable to hold the name of this function
-    auto FuncName = Builder.CreateGlobalStringPtr(F.getName());
-    FuncNameMap[F.getName()] = FuncName;
-
-    // Inject instruction to increment the call count each time this function
-    // executes
-    LoadInst *Load2 = Builder.CreateLoad(Var);
-    Value *Inc2 = Builder.CreateAdd(Builder.getInt32(1), Load2);
-    Builder.CreateStore(Inc2, Var);
-
-    // The following is visible only if you pass -debug on the command line
-    // *and* you have an assert build.
-    LLVM_DEBUG(dbgs() << " Instrumented: " << F.getName() << "\n");
-
-    Instrumented = true;
+  //print callee  FIXME: remove me
+  for (auto &BB : *Callee) {
+    for (auto Inst = BB.begin(), IE = BB.end(); Inst != IE; ++Inst) {
+      Instruction* ii = &*Inst;
+      LLVM_DEBUG(dbgs() << *ii << "\n");
+    }
   }
 
-  // Stop here if there are no function definitions in this module
-  if (false == Instrumented)
-    return Instrumented;
+  // TODO: find the position to call callee(foo)
+  for (auto &BB : *Caller) {
+    for (auto &Ins : BB) {
+      // As per the comments in CallSite.h (more specifically, comments for
+      // the base class CallSiteBase), ImmutableCallSite constructor creates
+      // a valid call-site or NULL for something which is NOT a call site.
+      auto ICS = ImmutableCallSite(&Ins);
+      if (nullptr == ICS.getInstruction()) {
+        continue;
+      }
 
-  // STEP 2: Inject the declaration of printf
-  // ----------------------------------------
-  // Create (or _get_ in cases where it's already available) the following
-  // declaration in the IR module:
-  //    declare i32 @printf(i8*, ...)
-  // It corresponds to the following C declaration:
-  //    int printf(char *, ...)
-  PointerType *PrintfArgTy = PointerType::getUnqual(Type::getInt8Ty(CTX));
-  FunctionType *PrintfTy =
-      FunctionType::get(IntegerType::getInt32Ty(CTX), PrintfArgTy,
-                        /*IsVarArgs=*/true);
-
-  FunctionCallee Printf = M.getOrInsertFunction("printf", PrintfTy);
-
-  // Set attributes as per inferLibFuncAttributes in BuildLibCalls.cpp
-  Function *PrintfF = dyn_cast<Function>(Printf.getCallee());
-  PrintfF->setDoesNotThrow();
-  PrintfF->addParamAttr(0, Attribute::NoCapture);
-  PrintfF->addParamAttr(0, Attribute::ReadOnly);
-
-  // STEP 3: Inject a global variable that will hold the printf format string
-  // ------------------------------------------------------------------------
-  llvm::Constant *ResultFormatStr =
-      llvm::ConstantDataArray::getString(CTX, "%-20s %-10lu\n");
-
-  Constant *ResultFormatStrVar =
-      M.getOrInsertGlobal("ResultFormatStrIR", ResultFormatStr->getType());
-  dyn_cast<GlobalVariable>(ResultFormatStrVar)->setInitializer(ResultFormatStr);
-
-  std::string out = "";
-  out += "=================================================\n";
-  out += "LLVM-TUTOR: analysis results\n";
-  out += "=================================================\n";
-  out += "NAME                 #N DIRECT CALLS\n";
-  out += "-------------------------------------------------\n";
-
-  llvm::Constant *ResultHeaderStr =
-      llvm::ConstantDataArray::getString(CTX, out.c_str());
-
-  Constant *ResultHeaderStrVar =
-      M.getOrInsertGlobal("ResultHeaderStrIR", ResultHeaderStr->getType());
-  dyn_cast<GlobalVariable>(ResultHeaderStrVar)->setInitializer(ResultHeaderStr);
-
-  // STEP 4: Define a printf wrapper that will print the results
-  // -----------------------------------------------------------
-  // Define `printf_wrapper` that will print the results stored in FuncNameMap
-  // and CallCounterMap.  It is equivalent to the following C++ function:
-  // ```
-  //    void printf_wrapper() {
-  //      for (auto &item : Functions)
-  //        printf("llvm-tutor): Function %s was called %d times. \n",
-  //        item.name, item.count);
-  //    }
-  // ```
-  // (item.name comes from FuncNameMap, item.count comes from
-  // CallCounterMap)
-  FunctionType *PrintfWrapperTy =
-      FunctionType::get(llvm::Type::getVoidTy(CTX), {},
-                        /*IsVarArgs=*/false);
-  Function *PrintfWrapperF = dyn_cast<Function>(
-      M.getOrInsertFunction("printf_wrapper", PrintfWrapperTy).getCallee());
-
-  // Create the entry basic block for printf_wrapper ...
-  llvm::BasicBlock *RetBlock =
-      llvm::BasicBlock::Create(CTX, "enter", PrintfWrapperF);
-  IRBuilder<> Builder(RetBlock);
-
-  // ... and start inserting calls to printf
-  // (printf requires i8*, so cast the input strings accordingly)
-  llvm::Value *ResultHeaderStrPtr =
-      Builder.CreatePointerCast(ResultHeaderStrVar, PrintfArgTy);
-  llvm::Value *ResultFormatStrPtr =
-      Builder.CreatePointerCast(ResultFormatStrVar, PrintfArgTy);
-
-  Builder.CreateCall(Printf, {ResultHeaderStrPtr});
-
-  LoadInst *LoadCounter;
-  for (auto &item : CallCounterMap) {
-    LoadCounter = Builder.CreateLoad(item.second);
-    Builder.CreateCall(
-        Printf, {ResultFormatStrPtr, FuncNameMap[item.first()], LoadCounter});
+      // Check whether the called function is directly invoked
+      auto DirectInvoc =
+          dyn_cast<Function>(ICS.getCalledValue()->stripPointerCasts());
+      if (nullptr == DirectInvoc) {
+        continue;
+      }
+      if (Callee->getName() == DirectInvoc->getName()) {
+        errs() << "Found target: " << DirectInvoc->getName() << "\n";
+        //TODO: remove the call related instr.
+        errs() << *DirectInvoc << "---\n";
+      }
+    }
   }
-
-  // Finally, insert return instruction
-  Builder.CreateRetVoid();
-
-  // STEP 5: Call `printf_wrapper` at the very end of this module
-  // ------------------------------------------------------------
-  appendToGlobalDtors(M, PrintfWrapperF, /*Priority=*/0);
 
   return true;
 }
