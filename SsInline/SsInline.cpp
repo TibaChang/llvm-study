@@ -5,6 +5,7 @@
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 
+
 using namespace llvm;
 
 #define DEBUG_TYPE "Ss-Inline"
@@ -69,7 +70,11 @@ bool SsInline::runOnModule(Module &M) {
     }
   }
 
-  // TODO: find the position to call callee(foo)
+  SmallVector<Instruction *, 8> ToRemove;
+  Instruction *RemoveCall;
+  // TODO: process multiple args
+  Value *UsedVar;
+  Value *RetVar;
   for (auto &BB : *Caller) {
     for (auto &Ins : BB) {
       // As per the comments in CallSite.h (more specifically, comments for
@@ -86,13 +91,55 @@ bool SsInline::runOnModule(Module &M) {
       if (nullptr == DirectInvoc) {
         continue;
       }
+      std::vector<Instruction *> cloneIns;
+      // Variables to keep track of the new bindings
       if (Callee->getName() == DirectInvoc->getName()) {
         errs() << "Found target: " << DirectInvoc->getName() << "\n";
-        //TODO: remove the call related instr.
-        errs() << *DirectInvoc << "---\n";
+        errs() << Ins << "---\n";
+        if (CallInst *call = dyn_cast<CallInst>(&Ins)) {
+          //TODO: get all the related var
+          // get where the arg comes from
+          //TODO: https://llvm.discourse.group/t/how-to-get-the-value-of-a-result-of-an-instruction/235/11
+          UsedVar = call->getArgOperand(0);// get arg
+          errs() << "What we want -> Arg: " << *UsedVar << "===\n";
+          //auto CS = CallSite(&Ins);
+          //errs() << *(CS.getInstruction()) << "===\n";
+          for (auto user : call->users()) {
+            errs() << *user << "\n";
+            errs() << "op[0]: " << *(user->getOperand(0)) << "\n";
+            errs() << "op[1]: " << *(user->getOperand(1)) << "\n";
+            if (user->getOperand(1) == call) {
+              errs() << "This is what we want\n";
+            }
+          }
+          // 1. clone all the instr. in the function
+          for (auto &BB : *DirectInvoc) {
+            for (auto &Ins : BB) {
+              Instruction *Clone = Ins.clone();
+              cloneIns.push_back(Clone);
+            }
+          }
+          // 2. if the op is related to the parameter that we found, replace it w/ the arg.
+          // TODO
+          // 3. if the op is related to the return value, replace it.
+          // 4. insert the clone at "call"
+          for (auto &Ins: cloneIns) {
+            if (!Ins->isTerminator()) {
+              Ins->insertBefore(call);
+            }
+          }
+          //ToRemove.push_back(call);
+          RemoveCall = call;
+          goto out;
+        }
       }
     }
   }
+out:
+  // 5. remove unused "call" related instr.
+  //RemoveCall->eraseFromParent(); // need to make sure no one use the result of call
+  // 6. show results
+  errs() << *Caller << "\n";
 
   return true;
 }
