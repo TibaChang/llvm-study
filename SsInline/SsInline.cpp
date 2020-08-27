@@ -4,6 +4,7 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
+#include "llvm/Transforms/Utils/ValueMapper.h"
 
 
 using namespace llvm;
@@ -112,33 +113,36 @@ bool SsInline::runOnModule(Module &M) {
               errs() << "This is what we want\n";
             }
           }
-          // 1. clone all the instr. in the function
+          Value *ArgToReplace;
+          Value *OpToRemove;
+          Value *AllocaToRemove;
+          for (auto& Arg : DirectInvoc->args()) {
+            errs() << Arg << "\n";
+            ArgToReplace = const_cast<Argument *>(&Arg);
+          }
+          // 1. clone the instr. in the function
+          ValueToValueMapTy vmap;
           for (auto &BB : *DirectInvoc) {
             for (auto &Ins : BB) {
-              Instruction *Clone = Ins.clone();
-              cloneIns.push_back(Clone);
+              if (!Ins.isTerminator()) {
+                Instruction *cloneIns = Ins.clone();
+                if (cloneIns->getOperand(0) == ArgToReplace) {
+                  // 2. replace the parameter w/ arg
+                  errs() << "Replace the op[0]: " << Ins << "\n";
+                  cloneIns->setOperand(0, UsedVar);
+                }
+                cloneIns->insertBefore(call);
+                vmap[&Ins] = cloneIns;
+                RemapInstruction(cloneIns, vmap, RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
+              }
             }
           }
-          // 2. if the op is related to the parameter that we found, replace it w/ the arg.
-          // TODO
-          // 3. if the op is related to the return value, replace it.
-          // 4. insert the clone at "call"
-          for (auto &Ins: cloneIns) {
-            if (!Ins->isTerminator()) {
-              Ins->insertBefore(call);
-            }
-          }
-          //ToRemove.push_back(call);
-          RemoveCall = call;
-          goto out;
+          // 3. replace call related op
+          // 4. remove call
         }
       }
     }
   }
-out:
-  // 5. remove unused "call" related instr.
-  //RemoveCall->eraseFromParent(); // need to make sure no one use the result of call
-  // 6. show results
   errs() << *Caller << "\n";
 
   return true;
