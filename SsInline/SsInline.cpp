@@ -63,17 +63,8 @@ bool SsInline::runOnModule(Module &M) {
   }
   LLVM_DEBUG(dbgs() << "Tmp Caller: " << Caller->getName() << "; Tmp Callee: " << Callee->getName() << "\n");
 
-  //print callee  FIXME: remove me
-  for (auto &BB : *Callee) {
-    for (auto Inst = BB.begin(), IE = BB.end(); Inst != IE; ++Inst) {
-      Instruction* ii = &*Inst;
-      LLVM_DEBUG(dbgs() << *ii << "\n");
-    }
-  }
-
   SmallVector<Instruction *, 8> ToRemove;
   Instruction *RemoveCall;
-  // TODO: process multiple args
   Value *UsedVar;
   Value *RetVal;
   CallInst *call;
@@ -96,21 +87,16 @@ bool SsInline::runOnModule(Module &M) {
       std::vector<Instruction *> cloneIns;
       // Variables to keep track of the new bindings
       if (Callee->getName() == DirectInvoc->getName()) {
-        errs() << "Found target: " << DirectInvoc->getName() << "\n";
-        errs() << Ins << "---\n";
+        errs() << "Found call: " << DirectInvoc->getName() << " w/ [" << Ins << "]\n";
         if (call = dyn_cast<CallInst>(&Ins)) {
-          //TODO: get all the related var
-          // get where the arg comes from
-          //TODO: https://llvm.discourse.group/t/how-to-get-the-value-of-a-result-of-an-instruction/235/11
+          // get where the arg comes from for the function, which will be used to replace the arg in function when inline
+          // TODO: process multiple args
           UsedVar = call->getArgOperand(0);// get arg
-          errs() << "What we want -> Arg: " << *UsedVar << "===\n";
-          //auto CS = CallSite(&Ins);
-          //errs() << *(CS.getInstruction()) << "===\n";
           Value *ArgToReplace;
           Value *OpToRemove;
           Value *AllocaToRemove;
           for (auto& Arg : DirectInvoc->args()) {
-            errs() << Arg << "\n";
+            errs() << "Func call src -> " << Arg << "\n";
             ArgToReplace = const_cast<Argument *>(&Arg);
           }
           // 1. clone the instr. in the function
@@ -129,7 +115,8 @@ bool SsInline::runOnModule(Module &M) {
               if (Ins.isTerminator()) {
                 RetVal = cloneIns->getOperand(0);
                 errs() << "Func ret val: " << *RetVal << "\n";
-                cloneIns->eraseFromParent();// remove the ret
+                // remove the ret
+                cloneIns->eraseFromParent();
               }
             }
           }
@@ -141,13 +128,15 @@ bool SsInline::runOnModule(Module &M) {
             // try to find which operand is the call
             for (auto operand = user->operands().begin();
                 operand != user->operands().end(); ++operand) {
-              errs() << "op -> " << **operand << "\n";
+              errs() << "Op of Call's user -> " << **operand << "\n";
               i++;
               if (*operand == call) {
                 errs() << "Found the call\n";
+                break;
               }
             }
-            user->setOperand(i, RetVal);//replace w/ returned val
+            // replace returned val w/ real value
+            user->setOperand(i, RetVal);
           }
         }
       }
