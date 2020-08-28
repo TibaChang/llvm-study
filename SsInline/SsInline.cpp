@@ -75,7 +75,8 @@ bool SsInline::runOnModule(Module &M) {
   Instruction *RemoveCall;
   // TODO: process multiple args
   Value *UsedVar;
-  Value *RetVar;
+  Value *RetVal;
+  CallInst *call;
   for (auto &BB : *Caller) {
     for (auto &Ins : BB) {
       // As per the comments in CallSite.h (more specifically, comments for
@@ -97,7 +98,7 @@ bool SsInline::runOnModule(Module &M) {
       if (Callee->getName() == DirectInvoc->getName()) {
         errs() << "Found target: " << DirectInvoc->getName() << "\n";
         errs() << Ins << "---\n";
-        if (CallInst *call = dyn_cast<CallInst>(&Ins)) {
+        if (call = dyn_cast<CallInst>(&Ins)) {
           //TODO: get all the related var
           // get where the arg comes from
           //TODO: https://llvm.discourse.group/t/how-to-get-the-value-of-a-result-of-an-instruction/235/11
@@ -105,14 +106,6 @@ bool SsInline::runOnModule(Module &M) {
           errs() << "What we want -> Arg: " << *UsedVar << "===\n";
           //auto CS = CallSite(&Ins);
           //errs() << *(CS.getInstruction()) << "===\n";
-          for (auto user : call->users()) {
-            errs() << *user << "\n";
-            errs() << "op[0]: " << *(user->getOperand(0)) << "\n";
-            errs() << "op[1]: " << *(user->getOperand(1)) << "\n";
-            if (user->getOperand(1) == call) {
-              errs() << "This is what we want\n";
-            }
-          }
           Value *ArgToReplace;
           Value *OpToRemove;
           Value *AllocaToRemove;
@@ -124,25 +117,45 @@ bool SsInline::runOnModule(Module &M) {
           ValueToValueMapTy vmap;
           for (auto &BB : *DirectInvoc) {
             for (auto &Ins : BB) {
-              if (!Ins.isTerminator()) {
-                Instruction *cloneIns = Ins.clone();
-                if (cloneIns->getOperand(0) == ArgToReplace) {
-                  // 2. replace the parameter w/ arg
-                  errs() << "Replace the op[0]: " << Ins << "\n";
-                  cloneIns->setOperand(0, UsedVar);
-                }
-                cloneIns->insertBefore(call);
-                vmap[&Ins] = cloneIns;
-                RemapInstruction(cloneIns, vmap, RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
+              Instruction *cloneIns = Ins.clone();
+              if (cloneIns->getOperand(0) == ArgToReplace) {
+                // 2. replace the parameter w/ arg
+                errs() << "Replace the op[0]: " << Ins << "\n";
+                cloneIns->setOperand(0, UsedVar);
+              }
+              cloneIns->insertBefore(call);
+              vmap[&Ins] = cloneIns;
+              RemapInstruction(cloneIns, vmap, RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
+              if (Ins.isTerminator()) {
+                RetVal = cloneIns->getOperand(0);
+                errs() << "Func ret val: " << *RetVal << "\n";
+                cloneIns->eraseFromParent();// remove the ret
               }
             }
           }
           // 3. replace call related op
-          // 4. remove call
+          errs() << "Call: " << *call << "\n";
+          for (auto user : call->users()) {
+            errs() << "Call's user: " << *user << "\n";// replace the op
+            int i = -1;
+            // try to find which operand is the call
+            for (auto operand = user->operands().begin();
+                operand != user->operands().end(); ++operand) {
+              errs() << "op -> " << **operand << "\n";
+              i++;
+              if (*operand == call) {
+                errs() << "Found the call\n";
+              }
+            }
+            user->setOperand(i, RetVal);//replace w/ returned val
+          }
         }
       }
     }
   }
+  // 4. remove call
+  call->eraseFromParent();
+  // show results
   errs() << *Caller << "\n";
 
   return true;
