@@ -33,11 +33,6 @@ Constant *CreateGlobalCounter(Module &M, StringRef GlobalVarName) {
 bool SsInline::runOnModule(Module &M) {
   bool Instrumented = false;
 
-  // Function name <--> IR variable that holds the call counter
-  llvm::StringMap<Constant *> CallCounterMap;
-  // Function name <--> IR variable that holds the function name
-  llvm::StringMap<Constant *> FuncNameMap;
-
   auto &CTX = M.getContext();
 
   Function *Caller;
@@ -47,27 +42,27 @@ bool SsInline::runOnModule(Module &M) {
       continue;
 
     for (auto &BB : F) {
-      for (auto &Instr : BB) {
-        if (CallInst *callInst = dyn_cast<CallInst>(&Instr)) {
-          if (Function *calledFunction = callInst->getCalledFunction()) {
-            if (calledFunction->getName().startswith("foo")) {
-              Caller = &F;
-              Callee = calledFunction;
-              LLVM_DEBUG(dbgs() << "Caller: " << Caller->getName() << "; Callee: " << Callee->getName() << "\n");
-              //TODO: a function can be callee for multiple caller
+      if (F.getName() == "main") {
+        //FIXME: currently, we only process the caller "main"
+        for (auto &Instr : BB) {
+          if (CallInst *callInst = dyn_cast<CallInst>(&Instr)) {
+            if (Function *calledFunction = callInst->getCalledFunction()) {
+                Caller = &F;
+                Callee = calledFunction;
+                // TODO: process multiple callee
+                LLVM_DEBUG(dbgs() << "Caller: " << Caller->getName() << "; Callee: " << Callee->getName() << "\n");
             }
           }
         }
       }
     }
   }
-  LLVM_DEBUG(dbgs() << "Tmp Caller: " << Caller->getName() << "; Tmp Callee: " << Callee->getName() << "\n");
 
-  SmallVector<Instruction *, 8> ToRemove;
-  Instruction *RemoveCall;
-  Value *UsedVar;
   Value *RetVal;
   CallInst *call;
+  ValueToValueMapTy vmap;
+  std::vector<Value *>ArgsToReplace;
+  std::vector<Value *>UsedVarAsArgs;
   for (auto &BB : *Caller) {
     for (auto &Ins : BB) {
       // As per the comments in CallSite.h (more specifically, comments for
@@ -90,24 +85,29 @@ bool SsInline::runOnModule(Module &M) {
         errs() << "Found call: " << DirectInvoc->getName() << " w/ [" << Ins << "]\n";
         if (call = dyn_cast<CallInst>(&Ins)) {
           // get where the arg comes from for the function, which will be used to replace the arg in function when inline
-          // TODO: process multiple args
-          UsedVar = call->getArgOperand(0);// get arg
-          Value *ArgToReplace;
-          Value *OpToRemove;
-          Value *AllocaToRemove;
           for (auto& Arg : DirectInvoc->args()) {
             errs() << "Func call src -> " << Arg << "\n";
-            ArgToReplace = const_cast<Argument *>(&Arg);
+            ArgsToReplace.push_back(const_cast<Argument *>(&Arg));
           }
           // 1. clone the instr. in the function
-          ValueToValueMapTy vmap;
           for (auto &BB : *DirectInvoc) {
             for (auto &Ins : BB) {
               Instruction *cloneIns = Ins.clone();
-              if (cloneIns->getOperand(0) == ArgToReplace) {
-                // 2. replace the parameter w/ arg
-                errs() << "Replace the op[0]: " << Ins << "\n";
-                cloneIns->setOperand(0, UsedVar);
+              errs() << "-----------Clone Inst: " << *cloneIns << "\n";
+              int arg_idx = 0;
+              for(auto Arg : ArgsToReplace) {
+                // 2. replace the parameter w/ arg passed in
+                errs() << "Arg: " << *Arg << "\n";
+                int op_idx = 0;
+                for (User::op_iterator op = cloneIns->op_begin(), e = cloneIns->op_end(); op != e; ++op) {
+                  errs() << "Op[" << op_idx << "]: "<< **op << "\n";
+                  if (cloneIns->getOperand(op_idx) == Arg) {
+                    errs() << "Replace: " << **op << " -> " << *(call->getArgOperand(op_idx)) << "\n";
+                    cloneIns->setOperand(op_idx, call->getArgOperand(arg_idx));//FIXME
+                  }
+                  op_idx++;
+                }
+                arg_idx++;
               }
               cloneIns->insertBefore(call);
               vmap[&Ins] = cloneIns;
