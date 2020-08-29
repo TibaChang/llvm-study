@@ -30,40 +30,14 @@ Constant *CreateGlobalCounter(Module &M, StringRef GlobalVarName) {
 //-----------------------------------------------------------------------------
 // SsInline implementation
 //-----------------------------------------------------------------------------
-bool SsInline::runOnModule(Module &M) {
-  bool Instrumented = false;
 
-  auto &CTX = M.getContext();
-
-  Function *Caller;
-  Function *Callee;
-  for (auto &F : M) {
-    if (F.isDeclaration())
-      continue;
-
-    for (auto &BB : F) {
-      if (F.getName() == "main") {
-        //FIXME: currently, we only process the caller "main"
-        for (auto &Instr : BB) {
-          if (CallInst *callInst = dyn_cast<CallInst>(&Instr)) {
-            if (Function *calledFunction = callInst->getCalledFunction()) {
-                Caller = &F;
-                Callee = calledFunction;
-                // TODO: process multiple callee
-                LLVM_DEBUG(dbgs() << "Caller: " << Caller->getName() << "; Callee: " << Callee->getName() << "\n");
-            }
-          }
-        }
-      }
-    }
-  }
-
+bool SsInline::inlineOnce(Function &Caller) {
   Value *RetVal;
   CallInst *call;
   ValueToValueMapTy vmap;
   std::vector<Value *>ArgsToReplace;
   std::vector<Value *>UsedVarAsArgs;
-  for (auto &BB : *Caller) {
+  for (auto &BB : Caller) {
     for (auto &Ins : BB) {
       // As per the comments in CallSite.h (more specifically, comments for
       // the base class CallSiteBase), ImmutableCallSite constructor creates
@@ -72,7 +46,6 @@ bool SsInline::runOnModule(Module &M) {
       if (nullptr == ICS.getInstruction()) {
         continue;
       }
-
       // Check whether the called function is directly invoked
       auto DirectInvoc =
           dyn_cast<Function>(ICS.getCalledValue()->stripPointerCasts());
@@ -80,74 +53,105 @@ bool SsInline::runOnModule(Module &M) {
         continue;
       }
       std::vector<Instruction *> cloneIns;
-      // Variables to keep track of the new bindings
-      if (Callee->getName() == DirectInvoc->getName()) {
-        errs() << "Found call: " << DirectInvoc->getName() << " w/ [" << Ins << "]\n";
-        if (call = dyn_cast<CallInst>(&Ins)) {
-          // get where the arg comes from for the function, which will be used to replace the arg in function when inline
-          for (auto& Arg : DirectInvoc->args()) {
-            errs() << "Func call src -> " << Arg << "\n";
-            ArgsToReplace.push_back(const_cast<Argument *>(&Arg));
-          }
-          // 1. clone the instr. in the function
-          for (auto &BB : *DirectInvoc) {
-            for (auto &Ins : BB) {
-              Instruction *cloneIns = Ins.clone();
-              errs() << "-----------Clone Inst: " << *cloneIns << "\n";
-              int arg_idx = 0;
-              for(auto Arg : ArgsToReplace) {
-                // 2. replace the parameter w/ arg passed in
-                errs() << "Arg: " << *Arg << "\n";
-                int op_idx = 0;
-                for (User::op_iterator op = cloneIns->op_begin(), e = cloneIns->op_end(); op != e; ++op) {
-                  errs() << "Op[" << op_idx << "]: "<< **op << "\n";
-                  if (cloneIns->getOperand(op_idx) == Arg) {
-                    errs() << "Replace: " << **op << " -> " << *(call->getArgOperand(op_idx)) << "\n";
-                    cloneIns->setOperand(op_idx, call->getArgOperand(arg_idx));//FIXME
-                  }
-                  op_idx++;
+      LLVM_DEBUG(dbgs() << "Found call: " << DirectInvoc->getName() << " w/ [" << Ins << "]\n");
+      if (call = dyn_cast<CallInst>(&Ins)) {
+        // get where the arg comes from for the function, which will be used to replace the arg in function when inline
+        for (auto& Arg : DirectInvoc->args()) {
+          LLVM_DEBUG(dbgs() << "Func call src -> " << Arg << "\n");
+          ArgsToReplace.push_back(const_cast<Argument *>(&Arg));
+        }
+        // 1. clone the instr. in the function
+        for (auto &BB : *DirectInvoc) {
+          for (auto &Ins : BB) {
+            Instruction *cloneIns = Ins.clone();
+            LLVM_DEBUG(dbgs() << "-----------Clone Inst: " << *cloneIns << "\n");
+            int arg_idx = 0;
+            for(auto Arg : ArgsToReplace) {
+              // 2. replace the parameter w/ arg passed in
+              LLVM_DEBUG(dbgs() << "Arg: " << *Arg << "\n");
+              int op_idx = 0;
+              for (User::op_iterator op = cloneIns->op_begin(), e = cloneIns->op_end(); op != e; ++op) {
+                LLVM_DEBUG(dbgs() << "Op[" << op_idx << "]: "<< **op << "\n");
+                if (cloneIns->getOperand(op_idx) == Arg) {
+                  LLVM_DEBUG(dbgs() << "Replace: " << **op << " -> " << *(call->getArgOperand(op_idx)) << "\n");
+                  cloneIns->setOperand(op_idx, call->getArgOperand(arg_idx));
                 }
-                arg_idx++;
+                op_idx++;
               }
-              cloneIns->insertBefore(call);
-              vmap[&Ins] = cloneIns;
-              RemapInstruction(cloneIns, vmap, RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
-              if (Ins.isTerminator()) {
-                RetVal = cloneIns->getOperand(0);
-                errs() << "Func ret val: " << *RetVal << "\n";
-                // remove the ret
-                cloneIns->eraseFromParent();
-              }
+              arg_idx++;
+            }
+            cloneIns->insertBefore(call);
+            vmap[&Ins] = cloneIns;
+            RemapInstruction(cloneIns, vmap, RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
+            if (Ins.isTerminator()) {
+              RetVal = cloneIns->getOperand(0);
+              LLVM_DEBUG(dbgs() << "Func ret val: " << *RetVal << "\n");
+              // remove the ret
+              cloneIns->eraseFromParent();
             }
           }
-          // 3. replace call related op
-          errs() << "Call: " << *call << "\n";
-          for (auto user : call->users()) {
-            errs() << "Call's user: " << *user << "\n";// replace the op
-            int i = -1;
-            // try to find which operand is the call
-            for (auto operand = user->operands().begin();
-                operand != user->operands().end(); ++operand) {
-              errs() << "Op of Call's user -> " << **operand << "\n";
-              i++;
-              if (*operand == call) {
-                errs() << "Found the call\n";
-                break;
-              }
+        }
+        // 3. replace call related op
+        LLVM_DEBUG(dbgs() << "Call: " << *call << "\n");
+        for (auto user : call->users()) {
+          LLVM_DEBUG(dbgs() << "Call's user: " << *user << "\n");
+          int i = -1;
+          // try to find which operand is the call
+          for (auto operand = user->operands().begin();
+              operand != user->operands().end(); ++operand) {
+            LLVM_DEBUG(dbgs() << "Op of Call's user -> " << **operand << "\n");
+            i++;
+            if (*operand == call) {
+              LLVM_DEBUG(dbgs() << "Found the call to remove.\n");
+              break;
             }
-            // replace returned val w/ real value
-            user->setOperand(i, RetVal);
+          }
+          // replace returned val w/ real value
+          user->setOperand(i, RetVal);
+        }
+        // 4. remove call
+        call->eraseFromParent();
+        // 5. show results
+        LLVM_DEBUG(dbgs() << Caller << "\n");
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+
+bool SsInline::runOnModule(Module &M) {
+  bool Changed = false;
+
+  auto &CTX = M.getContext();
+
+  Function *Caller;
+  Function *Callee;
+  std::vector<Function *> AllCallee;
+  for (auto &F : M) {
+    if (F.isDeclaration())
+      continue;
+    if (F.getName() == "main") {
+      //FIXME: currently, we only inline to the caller "main"
+      for (auto &BB : F) {
+        for (auto &Instr : BB) {
+          if (CallInst *callInst = dyn_cast<CallInst>(&Instr)) {
+            if (Function *calledFunction = callInst->getCalledFunction()) {
+                Caller = &F;
+            }
           }
         }
       }
     }
   }
-  // 4. remove call
-  call->eraseFromParent();
-  // show results
-  errs() << *Caller << "\n";
 
-  return true;
+  // inline a call once
+  while (inlineOnce(*Caller)) {
+    Changed = true;
+  }
+
+  return Changed;
 }
 
 PreservedAnalyses SsInline::run(llvm::Module &M,

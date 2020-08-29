@@ -11,6 +11,7 @@ struct SsInline : public llvm::PassInfoMixin<SsInline> {
   llvm::PreservedAnalyses run(llvm::Module &M,
                               llvm::ModuleAnalysisManager &);
   bool runOnModule(llvm::Module &M);
+  bool inlineOnce(llvm::Function &Caller);
 };
 
 //------------------------------------------------------------------------------
@@ -20,7 +21,7 @@ struct LegacySsInline : public llvm::ModulePass {
   static char ID;
   LegacySsInline() : ModulePass(ID) {}
   bool runOnModule(llvm::Module &M) override;
-
+  bool inlineOnce(llvm::Function &Caller);
   SsInline Impl;
 };
 
