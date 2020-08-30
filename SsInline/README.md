@@ -38,3 +38,7 @@ opt -load $rel_path/build/libSsInline.so -legacy-SsInline $rel_path/test-inputs/
 llvm-dis out.bc -o out.ll
 lli ./out.bc
 ```
+
+Reference for more details
+------------------------------
+This project is based on [llvm-tutor](https://github.com/banach-space/llvm-tutor/blob/master/README.md)
