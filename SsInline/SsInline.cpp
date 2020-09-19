@@ -11,22 +11,6 @@ using namespace llvm;
 
 #define DEBUG_TYPE "Ss-Inline"
 
-Constant *CreateGlobalCounter(Module &M, StringRef GlobalVarName) {
-  auto &CTX = M.getContext();
-
-  // This will insert a declaration into M
-  Constant *NewGlobalVar =
-      M.getOrInsertGlobal(GlobalVarName, IntegerType::getInt32Ty(CTX));
-
-  // This will change the declaration into definition (and initialise to 0)
-  GlobalVariable *NewGV = M.getNamedGlobal(GlobalVarName);
-  NewGV->setLinkage(GlobalValue::CommonLinkage);
-  NewGV->setAlignment(MaybeAlign(4));
-  NewGV->setInitializer(llvm::ConstantInt::get(CTX, APInt(32, 0)));
-
-  return NewGlobalVar;
-}
-
 //-----------------------------------------------------------------------------
 // SsInline implementation
 //-----------------------------------------------------------------------------
