@@ -6,6 +6,7 @@
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include "llvm/IR/Dominators.h"
+#include "llvm/ADT/DenseMap.h"
 
 
 using namespace llvm;
@@ -15,6 +16,21 @@ using namespace llvm;
 //-----------------------------------------------------------------------------
 // SsSCCP implementation
 //-----------------------------------------------------------------------------
+
+/// This code only looks at accesses to allocas.
+static bool isInterestingInstruction(const Instruction *I) {
+  return (isa<LoadInst>(I) && isa<AllocaInst>(I->getOperand(0))) ||
+         (isa<StoreInst>(I) && isa<AllocaInst>(I->getOperand(1)));
+}
+
+static void SCCP_GatherAlloca(BasicBlock &BB, DenseMap<const Instruction *, SsSCCP::AllocaInfo> *AllocaMap) {
+  for (auto &Ins : BB) {
+    if (isa<AllocaInst>(&Ins)) {
+      //TODO: add to map
+      errs() << Ins << "\n";
+    }
+  }
+}
 
 
 bool SsSCCP::DoSCCP(Function &F, DominatorTree *DT) {
@@ -30,15 +46,34 @@ bool SsSCCP::DoSCCP(Function &F, DominatorTree *DT) {
     return false;
   }
 
-  //TODO
+#if 0
   for (auto node = GraphTraits<DominatorTree *>::nodes_begin(DT);
        node != GraphTraits<DominatorTree *>::nodes_end(DT); ++node) {
     BasicBlock *BB = node->getBlock();
     // whatever you want to do with BB
     errs() << "BB-> " << BB->getName() << "\n";
   }
-
-
+  for (auto &BB : F) {
+    for (auto &Ins : BB) {
+      if (isInterestingInstruction(&Ins)) {
+        errs() << Ins << "\n";
+      }
+    }
+  }
+#endif
+  // Goal: Proves values to be constant, and replaces them with constants
+  SmallVector<BasicBlock *, 16> DominatedBBs;
+  DT->getDescendants(DT->getRoot(), DominatedBBs);
+  for (auto *BB : DominatedBBs) {
+    if (DT->getNode(BB)->getLevel() == 1) {
+      errs() << BB->getName() << "\n";
+      DenseMap<const Instruction *, class AllocaInfo> AllocaMap;
+      //TODO
+      SCCP_GatherAlloca(F.getEntryBlock(), &AllocaMap);
+      //SCCP_SearchDFS(BB, AllocaMap);
+      //SCCP_ReplaceAllocaWithConstantDFS(BB, AllocaMap);
+    }
+  }
   return Changed;
 }
 

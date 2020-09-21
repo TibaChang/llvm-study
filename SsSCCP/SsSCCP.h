@@ -8,17 +8,23 @@
 //------------------------------------------------------------------------------
 // New PM interface
 //------------------------------------------------------------------------------
-struct SsSCCP : public llvm::PassInfoMixin<SsSCCP> {
+class SsSCCP : public llvm::PassInfoMixin<SsSCCP> {
+public:
   llvm::PreservedAnalyses run(llvm::Function &F,
                               llvm::FunctionAnalysisManager &);
   bool runOnFunction(llvm::Function &F);
   bool DoSCCP(llvm::Function&, llvm::DominatorTree*);
+  class AllocaInfo {
+    llvm::Instruction *Inst;
+    int ConstantNum;
+  };
 };
 
 //------------------------------------------------------------------------------
 // Legacy PM interface
 //------------------------------------------------------------------------------
-struct LegacySsSCCP : public llvm::FunctionPass {
+class LegacySsSCCP : public llvm::FunctionPass {
+public:
   static char ID;
   LegacySsSCCP() : FunctionPass(ID) {}
   bool runOnFunction(llvm::Function &F) override;
