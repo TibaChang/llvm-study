@@ -15,8 +15,11 @@ public:
   bool runOnFunction(llvm::Function &F);
   bool DoSCCP(llvm::Function&, llvm::DominatorTree*);
   class AllocaInfo {
-    llvm::Instruction *Inst;
-    int ConstantNum;
+    public:
+      llvm::BasicBlock *BB;
+      int Num;
+      AllocaInfo() {};
+      AllocaInfo(llvm::BasicBlock *BB, int Num) : BB(BB), Num(Num) {};
   };
 };
 
