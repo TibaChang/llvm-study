@@ -9,13 +9,17 @@ entry:
   %a = alloca i32, align 4
   %b = alloca i32, align 4
   %c = alloca i32, align 4
-  %e = alloca i32, align 4
   %d = alloca i32, align 4
+  %e = alloca i32, align 4
+  %g = alloca i32, align 4
+  %f = alloca i32, align 4
   store i32 1, i32* %a, align 4
   store i32 2, i32* %b, align 4
   store i32 3, i32* %c, align 4
-  store i32 100, i32* %e, align 4
   store i32 4, i32* %d, align 4
+  store i32 100, i32* %e, align 4
+  store i32 9, i32* %g, align 4
+  store i32 10, i32* %f, align 4
   %0 = load i32, i32* %a, align 4
   %cmp = icmp eq i32 %0, 1
   br i1 %cmp, label %if.then, label %if.else
@@ -28,13 +32,13 @@ if.then:                                          ; preds = %entry
   %3 = load i32, i32* %b, align 4
   %mul = mul nsw i32 %3, 2
   store i32 %mul, i32* %b, align 4
-  br label %if.end13
+  br label %if.end17
 
 if.else:                                          ; preds = %entry
   store i32 6, i32* %e, align 4
   %4 = load i32, i32* %e, align 4
   %cmp1 = icmp sgt i32 %4, 3
-  br i1 %cmp1, label %if.then2, label %if.end12
+  br i1 %cmp1, label %if.then2, label %if.end16
 
 if.then2:                                         ; preds = %if.else
   store i32 5, i32* %a, align 4
@@ -47,7 +51,7 @@ if.then4:                                         ; preds = %if.then2
   %7 = load i32, i32* %d, align 4
   %add5 = add nsw i32 6, %7
   store i32 %add5, i32* %a, align 4
-  br label %if.end11
+  br label %if.end15
 
 if.else6:                                         ; preds = %if.then2
   %8 = load i32, i32* %d, align 4
@@ -56,31 +60,43 @@ if.else6:                                         ; preds = %if.then2
   %9 = load i32, i32* %c, align 4
   %10 = load i32, i32* %a, align 4
   %cmp8 = icmp sgt i32 %9, %10
-  br i1 %cmp8, label %if.then9, label %if.end
+  br i1 %cmp8, label %if.then9, label %if.end14
 
 if.then9:                                         ; preds = %if.else6
   %11 = load i32, i32* %b, align 4
   %12 = load i32, i32* %d, align 4
   %add10 = add nsw i32 %11, %12
   store i32 %add10, i32* %a, align 4
+  %13 = load i32, i32* %g, align 4
+  %14 = load i32, i32* %f, align 4
+  %cmp11 = icmp sgt i32 %13, %14
+  br i1 %cmp11, label %if.then12, label %if.end
+
+if.then12:                                        ; preds = %if.then9
+  %15 = load i32, i32* %g, align 4
+  %add13 = add nsw i32 %15, 2
+  store i32 %add13, i32* %a, align 4
   br label %if.end
 
-if.end:                                           ; preds = %if.then9, %if.else6
-  br label %if.end11
+if.end:                                           ; preds = %if.then12, %if.then9
+  br label %if.end14
 
-if.end11:                                         ; preds = %if.end, %if.then4
-  br label %if.end12
+if.end14:                                         ; preds = %if.end, %if.else6
+  br label %if.end15
 
-if.end12:                                         ; preds = %if.end11, %if.else
-  br label %if.end13
+if.end15:                                         ; preds = %if.end14, %if.then4
+  br label %if.end16
 
-if.end13:                                         ; preds = %if.end12, %if.then
-  %13 = load i32, i32* %a, align 4
-  %14 = load i32, i32* %c, align 4
-  %add14 = add nsw i32 %13, %14
-  %15 = load i32, i32* %d, align 4
-  %add15 = add nsw i32 %add14, %15
-  store i32 %add15, i32* %a, align 4
+if.end16:                                         ; preds = %if.end15, %if.else
+  br label %if.end17
+
+if.end17:                                         ; preds = %if.end16, %if.then
+  %16 = load i32, i32* %a, align 4
+  %17 = load i32, i32* %c, align 4
+  %add18 = add nsw i32 %16, %17
+  %18 = load i32, i32* %d, align 4
+  %add19 = add nsw i32 %add18, %18
+  store i32 %add19, i32* %a, align 4
   ret i32 0
 }
 

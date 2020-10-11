@@ -2,8 +2,10 @@ int foo (void) {
   int a = 1;
   int b = 2;
   int c = 3;
-  int e = 100;
   int d = 4;
+  int e = 100;
+  int g = 9;
+  int f = 10;
   if (a == 1) {
     b = b + d;
     b *= 2;
@@ -17,6 +19,9 @@ int foo (void) {
         e = 999 + d;
         if (c > a) {
           a = b + d;
+          if (g > f) {
+            a = g + 2;
+          }
         }
       }
     }

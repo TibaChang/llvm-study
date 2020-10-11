@@ -7,6 +7,8 @@
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
 
 using namespace std;
@@ -89,7 +91,6 @@ static void SCCP_SearchDFS(DominatorTree *DT, BasicBlock *BB, DenseMap<Instructi
 }
 
 static void SCCP_ReplaceAllocaWithConstantDFS(DominatorTree *DT, BasicBlock *BB, DenseMap<Instruction *, SsSCCP::AllocaInfo> *AllocaMap, uint32_t CurrentDomLevel, DenseMap<Instruction *, SsSCCP::AllocaInfo> *ReplaceMap) {
-  //TODO: replace all AllocaMap w/ the int in Instr.
   SmallVector<BasicBlock *, 24> DominatedBBs;
   DT->getDescendants(BB, DominatedBBs);
   uint32_t CurrentLevel;
@@ -136,6 +137,31 @@ static void SCCP_ReplaceAllocaWithConstantDFS(DominatorTree *DT, BasicBlock *BB,
 }
 
 
+void replaceBB(BasicBlock *BBToErase, BasicBlock *BBToRetain) {
+  SmallVector<BasicBlock *, 8> BBToUpdate(predecessors(BBToErase));
+
+  LLVM_DEBUG(dbgs() << "DEDUP BB: merging duplicated blocks ("
+                    << BBToErase->getName() << " into " << BBToRetain->getName()
+                    << ")\n");
+
+  for (BasicBlock *BB0 : BBToUpdate) {
+    // The terminator is either a branch (conditional or unconditional) or a
+    // switch statement. One of its targets should be BBToErase. Replace
+    // that target with BBToRetain.
+    Instruction *Term = BB0->getTerminator();
+    bool Updated = false;
+    for (unsigned OpIdx = 0, NumOpnds = Term->getNumOperands();
+         OpIdx != NumOpnds; ++OpIdx) {
+      if (Term->getOperand(OpIdx) == BBToErase) {
+        Term->setOperand(OpIdx, BBToRetain);
+        Updated = true;
+      }
+    }
+    assert(Updated && "Inconsistent CFG and branch instruction");
+  }
+}
+
+
 bool SsSCCP::DoSCCP(Function &F, DominatorTree *DT) {
   bool Changed = false;
 
@@ -161,9 +187,61 @@ bool SsSCCP::DoSCCP(Function &F, DominatorTree *DT) {
       SCCP_SearchDFS(DT, BB, &LocalAllocaMap, 1); // start at level 1
       DenseMap<Instruction *, SsSCCP::AllocaInfo> ReplaceMap;
       SCCP_ReplaceAllocaWithConstantDFS(DT, BB, &LocalAllocaMap, 1, &ReplaceMap);
-      //TODO: remove the inst in ReplaceMap
       for (auto &ele : ReplaceMap) {
         (*(ele.first)).eraseFromParent();
+        Changed = true;
+      }
+    }
+  }
+  errs() << "-----------------------------------------------------------\n";
+  // Goal: Proves conditional branches to be unconditional
+  BasicBlock *TargetBB, *DeleteBB;
+  for (Function::iterator b = F.begin(), be = F.end(); b != be; ++b) {
+    BasicBlock *BB = &(*b);
+    for (BasicBlock::iterator i = BB->begin(), e = BB->end(); i != e; ++i) {
+      Instruction *Inst = &(*i);
+      // 1. find the branch inst.
+      if (isa<BranchInst>(Inst)) {
+        //errs() << Inst << "\n";
+        // 2. get op 0
+        CmpInst *Cmp = dyn_cast<CmpInst>(Inst->getOperand(0));
+        if (Cmp) {
+          bool isAllConstant = true;
+          auto *Op_0 = Cmp->getOperand(0);
+          auto *Op_1 = Cmp->getOperand(1);
+          ConstantInt *Val_0 = dyn_cast<ConstantInt>(Op_0);
+          ConstantInt *Val_1 = dyn_cast<ConstantInt>(Op_1);
+          // 3. make sure all the op are constant
+          if (Val_0 && Val_1) {
+            errs() << "Cmp: " << *Cmp << "\n";
+            // 4. choose the BB for merge
+            switch (Cmp->getPredicate()) {
+              case CmpInst::ICMP_SGT:
+                if (Val_0->getValue().sgt(Val_1->getValue())) {
+                  TargetBB = Inst->getSuccessor(0);
+                  DeleteBB = Inst->getSuccessor(1);
+                } else {
+                  TargetBB = Inst->getSuccessor(1);
+                  DeleteBB = Inst->getSuccessor(0);
+                }
+                errs() << *TargetBB << "\n"; 
+                break;
+              default:
+                errs() << "Not handled Predicate for CMP.\n";
+            }
+            // 5. replace the dead BB
+            replaceBB(DeleteBB, TargetBB);
+            DeleteDeadBlock(DeleteBB);
+            // 6. replace the condition branch to be unconditional
+            BranchInst::Create(TargetBB, BB);
+            Inst->eraseFromParent();
+            // 7. remove the cmp & conditional branch
+            Cmp->eraseFromParent();
+            //TODO: iterate for all if changed.
+            //Changed = true;
+            return true;
+          }
+        }
       }
     }
   }
