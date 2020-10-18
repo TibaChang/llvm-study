@@ -21,6 +21,8 @@ int foo (void) {
           a = b + d;
           if (g > f) {
             a = g + 2;
+          } else {
+            a = a + 5;
           }
         }
       }

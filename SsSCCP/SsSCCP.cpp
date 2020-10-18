@@ -30,10 +30,10 @@ static void SCCP_GatherAlloca(BasicBlock &BB, DenseMap<Instruction *, SsSCCP::Al
   uint64_t Num;
   for (auto &Ins : BB) {
     if (isa<AllocaInst>(&Ins)) {
-      LLVM_DEBUG(dbgs() << Ins << "\n";
+      LLVM_DEBUG(dbgs() << Ins << "\n");
       for (User *user : Ins.users()) {
         auto *UserI = dyn_cast<Instruction>(user);
-        //LLVM_DEBUG(dbgs() << *UserI << "\n";
+        //LLVM_DEBUG(dbgs() << *UserI << "\n");
         if (UserI && isa<StoreInst>(UserI) && isa<ConstantInt>(UserI->getOperand(0))) {
           ConstantInt *Val = cast<ConstantInt>(UserI->getOperand(0));
           Num = Val->getLimitedValue(~0U);
@@ -46,7 +46,7 @@ static void SCCP_GatherAlloca(BasicBlock &BB, DenseMap<Instruction *, SsSCCP::Al
   }
 #if 0
   for (auto &ele: *AllocaMap) {
-    LLVM_DEBUG(dbgs() << *(ele.first) << ": " << (ele.second).Num << " in " << (ele.second).BB->getName() << "\n";
+    LLVM_DEBUG(dbgs() << *(ele.first) << ": " << (ele.second).Num << " in " << (ele.second).BB->getName() << "\n");
   }
 #endif
 }
@@ -60,14 +60,14 @@ static void SCCP_SearchDFS(DominatorTree *DT, BasicBlock *BB, DenseMap<Instructi
   for (auto *dBB : DominatedBBs) {
     CurrentLevel = DT->getNode(dBB)->getLevel();
     if (CurrentDomLevel == CurrentLevel) {
-      //LLVM_DEBUG(dbgs() << "    child BB=[" << dBB->getName() << "] at lvl=[" << CurrentLevel << "]\n";
+      //LLVM_DEBUG(dbgs() << "    child BB=[" << dBB->getName() << "] at lvl=[" << CurrentLevel << "]\n");
       // if found store to the alloca in map, treat it as changed.
       for (auto &Inst : *dBB) {
         if (isa<StoreInst>(Inst)) {
-          //LLVM_DEBUG(dbgs() << "Found store: " << Inst << "\n";
+          //LLVM_DEBUG(dbgs() << "Found store: " << Inst << "\n");
           pInst = cast<Instruction>((Inst.getOperand(1)));
           if ((*AllocaMap).find(pInst) != (*AllocaMap).end()) {
-            LLVM_DEBUG(dbgs() << "<Erase> " << *pInst << "; for " << Inst << "\n";
+            LLVM_DEBUG(dbgs() << "<Erase> " << *pInst << "; for " << Inst << "\n");
             (*AllocaMap).erase(pInst);
           }
         }
@@ -87,7 +87,7 @@ static void SCCP_ReplaceAllocaWithConstantDFS(DominatorTree *DT, BasicBlock *BB,
     CurrentLevel = DT->getNode(dBB)->getLevel();
     if (CurrentDomLevel == CurrentLevel) {
       for (auto &Inst : *dBB) {
-        //LLVM_DEBUG(dbgs() << "BB: " << dBB->getName() << "-> " << Inst << "\n";
+        //LLVM_DEBUG(dbgs() << "BB: " << dBB->getName() << "-> " << Inst << "\n");
         bNextInst = false;
         for (auto operand = Inst.operands().begin();
             operand != Inst.operands().end(); ++operand) {
@@ -111,9 +111,9 @@ static void SCCP_ReplaceAllocaWithConstantDFS(DominatorTree *DT, BasicBlock *BB,
           if ((opInst != nullptr) && ((*ReplaceMap).find(opInst) != (*ReplaceMap).end())) {
             // 2. if the op is in ReplaceMap, replace it.
             auto TargetVal = ConstantInt::get((*operand)->getType(), (*ReplaceMap)[opInst].Num);
-            LLVM_DEBUG(dbgs() << "Try to replace the user of Inst: [" << Inst << "] w/ op[" << *TargetVal << "]\n"; 
+            LLVM_DEBUG(dbgs() << "Try to replace the user of Inst: [" << Inst << "] w/ op[" << *TargetVal << "]\n"); 
             Inst.setOperand(i, TargetVal);
-            LLVM_DEBUG(dbgs() << "After replace-> [" << Inst << "]\n"; 
+            LLVM_DEBUG(dbgs() << "After replace-> [" << Inst << "]\n"); 
           }
           i++;
         }
@@ -124,7 +124,7 @@ static void SCCP_ReplaceAllocaWithConstantDFS(DominatorTree *DT, BasicBlock *BB,
 }
 
 
-void replaceBB(BasicBlock *BBToErase, BasicBlock *BBToRetain) {
+void mergeBranchTwoBBToOneBB(BasicBlock *BBToErase, BasicBlock *BBToRetain) {
   SmallVector<BasicBlock *, 8> BBToUpdate(predecessors(BBToErase));
 
   LLVM_DEBUG(dbgs() << "DEDUP BB: merging duplicated blocks ("
@@ -153,7 +153,7 @@ bool SsSCCP::DoSCCP(Function &F, DominatorTree *DT) {
   bool Changed = false;
 
   if (DT == nullptr) {
-    LLVM_DEBUG(dbgs() << "DT is nullptr\n";
+    LLVM_DEBUG(dbgs() << "DT is nullptr\n");
     return false;
   }
 
@@ -169,7 +169,7 @@ bool SsSCCP::DoSCCP(Function &F, DominatorTree *DT) {
   DT->getDescendants(DT->getRoot(), DominatedBBs);
   for (auto *BB : DominatedBBs) {
     if (DT->getNode(BB)->getLevel() == 1) {
-      LLVM_DEBUG(dbgs() << "Begin DFS: " << BB->getName() << "\n";
+      LLVM_DEBUG(dbgs() << "Begin DFS: " << BB->getName() << "\n");
       DenseMap<Instruction *, AllocaInfo> LocalAllocaMap = AllocaMap;
       SCCP_SearchDFS(DT, BB, &LocalAllocaMap, 1); // start at level 1
       DenseMap<Instruction *, SsSCCP::AllocaInfo> ReplaceMap;
@@ -180,15 +180,16 @@ bool SsSCCP::DoSCCP(Function &F, DominatorTree *DT) {
       }
     }
   }
-  LLVM_DEBUG(dbgs() << "-----------------------------------------------------------\n";
+  LLVM_DEBUG(dbgs() << "-----------------------------------------------------------\n");
   // Goal: Proves conditional branches to be unconditional
+  std::vector<std::pair<BasicBlock *, BasicBlock *>> BBtoEmplace;
   for (Function::iterator b = F.begin(), be = F.end(); b != be; ++b) {
     BasicBlock *BB = &(*b);
     for (BasicBlock::iterator i = BB->begin(), e = BB->end(); i != e; ++i) {
       Instruction *Inst = &(*i);
       // 1. find the branch inst.
       if (isa<BranchInst>(Inst)) {
-        //LLVM_DEBUG(dbgs() << Inst << "\n";
+        //LLVM_DEBUG(dbgs() << Inst << "\n");
         // 2. get op 0
         CmpInst *Cmp = dyn_cast<CmpInst>(Inst->getOperand(0));
         if (Cmp) {
@@ -199,7 +200,7 @@ bool SsSCCP::DoSCCP(Function &F, DominatorTree *DT) {
           ConstantInt *Val_1 = dyn_cast<ConstantInt>(Op_1);
           // 3. make sure all the op are constant
           if (Val_0 && Val_1) {
-            LLVM_DEBUG(dbgs() << "Cmp: " << *Cmp << "\n";
+            LLVM_DEBUG(dbgs() << "Cmp: " << *Cmp << "\n");
             BasicBlock *TargetBB, *DeleteBB;
             // 4. choose the BB for merge
             switch (Cmp->getPredicate()) {
@@ -211,25 +212,49 @@ bool SsSCCP::DoSCCP(Function &F, DominatorTree *DT) {
                   TargetBB = Inst->getSuccessor(1);
                   DeleteBB = Inst->getSuccessor(0);
                 }
-                LLVM_DEBUG(dbgs() << *TargetBB << "\n"; 
+                //LLVM_DEBUG(dbgs() << *TargetBB << "\n"); 
                 break;
               default:
-                LLVM_DEBUG(dbgs() << "Not handled Predicate for CMP.\n";
+                LLVM_DEBUG(dbgs() << "Not handled Predicate for CMP.\n");
             }
             // 5. replace the dead BB
-            replaceBB(DeleteBB, TargetBB);
+            mergeBranchTwoBBToOneBB(DeleteBB, TargetBB);
             DeleteDeadBlock(DeleteBB);
             // 6. replace the condition branch to be unconditional
-            BranchInst::Create(TargetBB, BB);
+            BranchInst *BranchIns = BranchInst::Create(TargetBB, BB);
             Inst->eraseFromParent();
             // 7. remove the cmp & conditional branch
             Cmp->eraseFromParent();
-            Changed = true;
+            std::pair<BasicBlock *, BasicBlock *> BBpair(BB, TargetBB); // <from, to>
+            BBtoEmplace.push_back(BBpair);
             break;
           }
         }
       }
     }
+  }
+  // 8. copy "dst" BB into "src" BB.
+  ValueToValueMapTy vmap;
+  for (auto BBpair : BBtoEmplace) {
+    // <first, second> = <src, dst>
+    for (Instruction &DstIns : *(BBpair.second)) {
+      if (!isa<BranchInst>(&DstIns)) {
+        Instruction *cloneIns = DstIns.clone();
+        cloneIns->insertBefore(BBpair.first->getTerminator());
+        // remap to let the cloned inst. operate on the new operands.
+        vmap[&DstIns] = cloneIns;
+        RemapInstruction(cloneIns, vmap, RF_NoModuleLevelChanges | RF_IgnoreMissingLocals);
+      }
+    }
+    // 9. replace branch
+    int BranchTargetOpIndex = 0;
+    Instruction *OrigBranch = BBpair.second->getTerminator();
+    BasicBlock *FinalBB = dyn_cast<BasicBlock>(OrigBranch->getOperand(BranchTargetOpIndex));
+    BranchInst *BranchIns = BranchInst::Create(FinalBB);
+    ReplaceInstWithInst(BBpair.first->getTerminator(), BranchIns);
+    // 10: remove dead BB.
+    DeleteDeadBlock(BBpair.second);
+    Changed = true;
   }
   return Changed;
 }
