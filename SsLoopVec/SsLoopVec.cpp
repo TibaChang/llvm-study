@@ -6,6 +6,7 @@
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Transforms/Utils/ValueMapper.h"
 #include "llvm/IR/Dominators.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
@@ -20,21 +21,30 @@ using namespace llvm;
 // SsLoopVec implementation
 //-----------------------------------------------------------------------------
 
-bool SsLoopVec::DoImpl(llvm::Function &F) {
+bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
+  SmallVector<Loop *, 16> PreorderLoops = LI.getLoopsInPreorder();
+  do {
+    Loop &L = *PreorderLoops.pop_back_val();
+    errs() << L << "\n";
+
+  } while (!PreorderLoops.empty());
   return true;
 }
 
 
 PreservedAnalyses SsLoopVec::run(llvm::Function &F,
                                           llvm::FunctionAnalysisManager &FAM) {
-  bool Changed = DoImpl(F);
+  LoopInfo &LI = FAM.getResult<LoopAnalysis>(F);
+  bool Changed = DoImpl(F, LI);
 
   return (Changed ? llvm::PreservedAnalyses::none()
                   : llvm::PreservedAnalyses::all());
 }
 
 bool LegacySsLoopVec::runOnFunction(llvm::Function &F) {
-  bool Changed = Impl.DoImpl(F);
+  DominatorTree DT(F);
+  LoopInfo LI(DT);
+  bool Changed = Impl.DoImpl(F, LI);
 
   return Changed;
 }

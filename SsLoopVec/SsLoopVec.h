@@ -2,6 +2,8 @@
 #define LLVM_TUTOR_INSTRUMENT_BASIC_H
 
 #include "llvm/IR/PassManager.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Pass.h"
 
 //------------------------------------------------------------------------------
@@ -9,7 +11,7 @@
 //------------------------------------------------------------------------------
 class SsLoopVec : public llvm::PassInfoMixin<SsLoopVec> {
 public:
-  bool DoImpl(llvm::Function &F);
+  bool DoImpl(llvm::Function &F, llvm::LoopInfo &LI);
   llvm::PreservedAnalyses run(llvm::Function &F,
                               llvm::FunctionAnalysisManager &);
   bool runOnFunction(llvm::Function &F);
