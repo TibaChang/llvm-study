@@ -22,10 +22,37 @@ using namespace llvm;
 //-----------------------------------------------------------------------------
 
 bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
+  //FIXME: currently only run on a specific function for development.
+  if (F.getName() != "foo") {
+    return false;
+  }
+
   SmallVector<Loop *, 16> PreorderLoops = LI.getLoopsInPreorder();
   do {
     Loop &L = *PreorderLoops.pop_back_val();
-    errs() << L << "\n";
+    BasicBlock *Header = L.getHeader();
+    BasicBlock *LBody, *LInc;
+    //errs() << "Header-> \n" << *Header << "\n";
+    // get the term. of header (2 candicates)
+    Instruction *HeaderTerm = Header->getTerminator();
+    for (auto operand = HeaderTerm->operands().begin();
+                    operand != HeaderTerm->operands().end(); ++operand) {
+      // if it is not loop.end
+      if ((L.getExitBlock() != *operand) && isa<BasicBlock>(operand)) {
+        // it is loop body
+        LBody = dyn_cast<BasicBlock>(*operand);
+      }
+    }
+    Instruction *BodyTerm = LBody->getTerminator();
+    LInc = dyn_cast<BasicBlock>(BodyTerm->getOperand(0));
+    if (!LBody || !LInc) {
+      return false;
+    } else {
+        errs() << "Body-> " << *LBody << "\n";
+        errs() << "Inc-> " << *LInc << "\n";
+    }
+    // TODO: vectorize body in LBody
+    // TODO: modify the step in LInc
 
   } while (!PreorderLoops.empty());
   return true;
