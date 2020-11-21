@@ -44,6 +44,7 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
       }
     }
     Instruction *BodyTerm = LBody->getTerminator();
+    // get Loop.Inc from Loop.Body->Terminator
     LInc = dyn_cast<BasicBlock>(BodyTerm->getOperand(0));
     if (!LBody || !LInc) {
       return false;
@@ -51,7 +52,51 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
         errs() << "Body-> " << *LBody << "\n";
         errs() << "Inc-> " << *LInc << "\n";
     }
-    // TODO: vectorize body in LBody
+    errs() << "\n----------------Start Impl.------------------\n\n";
+    Instruction *prevInst;
+    for (Instruction &Inst : *LBody) {
+#if 0
+      if (prevInst->getOpcode() == Instruction::GetElementPtr) {
+        // TODO: vectorize body in LBody
+        // bitcast?
+        errs() << "Prev->" << *prevInst << "\n";
+        IRBuilder<> Builder(&Inst);
+        GetElementPtrInst *Gep = cast<GetElementPtrInst>(prevInst);
+        unsigned int Addr = Gep->getType()->getPointerAddressSpace();
+        unsigned int InterleaveFactor = 4;
+        Type *ScalarTy = Gep->getType()->getPointerElementType();
+        errs() << "Scalar-> " << *ScalarTy << "\n";
+#if 0
+        //Type *ScalarTy = (cast<GetElementPtrInst>(prevInst))->getType()->getPointerElementType();
+        Type *VecTy = VectorType::get(ScalarTy, InterleaveFactor);
+        Type *PtrTy = VecTy->getPointerTo(Addr);
+        Value * Bitcast = Builder.CreateBitCast(Gep, PtrTy);
+        errs() << "Get type:" << *Bitcast << "\n";
+        errs() << "New Body-> " << *LBody << "\n";
+        break;
+#endif
+      }
+#else
+      if (Inst.getOpcode() == Instruction::GetElementPtr) {
+        // TODO: vectorize body in LBody
+        // bitcast?
+        IRBuilder<> Builder(&Inst);
+        GetElementPtrInst *Gep = cast<GetElementPtrInst>(&Inst);
+        unsigned int Addr = Gep->getType()->getPointerAddressSpace();
+        unsigned int InterleaveFactor = 4;
+        Type *ScalarTy = Gep->getType()->getPointerElementType();
+        //Type *ScalarTy = (cast<GetElementPtrInst>(prevInst))->getType()->getPointerElementType();
+        errs() << "Scalar-> " << *ScalarTy << "\n";
+        Type *VecTy = VectorType::get(ScalarTy, InterleaveFactor);
+        Type *PtrTy = VecTy->getPointerTo(Addr);
+        Value * Bitcast = Builder.CreateBitCast(Gep, PtrTy);
+        errs() << "Get type:" << *Bitcast << "\n";
+        errs() << "New Body-> " << *LBody << "\n";
+        break;
+      }
+#endif
+      prevInst = &Inst;
+    }
     // TODO: modify the step in LInc
 
   } while (!PreorderLoops.empty());
