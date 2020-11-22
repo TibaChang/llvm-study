@@ -31,7 +31,7 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
   do {
     Loop &L = *PreorderLoops.pop_back_val();
     BasicBlock *Header = L.getHeader();
-    BasicBlock *LBody, *LInc;
+    BasicBlock *LBody, *LInc, *LCond;
     //errs() << "Header-> \n" << *Header << "\n";
     // get the term. of header (2 candicates)
     Instruction *HeaderTerm = Header->getTerminator();
@@ -43,47 +43,78 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
         LBody = dyn_cast<BasicBlock>(*operand);
       }
     }
-    Instruction *BodyTerm = LBody->getTerminator();
     // get Loop.Inc from Loop.Body->Terminator
+    Instruction *BodyTerm = LBody->getTerminator();
     LInc = dyn_cast<BasicBlock>(BodyTerm->getOperand(0));
-    if (!LBody || !LInc) {
+    // get Loop.Inc from Loop.Inc->Terminator
+    Instruction *IncTerm = LInc->getTerminator();
+    LCond = dyn_cast<BasicBlock>(IncTerm->getOperand(0));
+    if (!LBody || !LInc || !LCond) {
       return false;
     } else {
+        errs() << "Cond-> " << *LCond << "\n";
         errs() << "Body-> " << *LBody << "\n";
         errs() << "Inc-> " << *LInc << "\n";
     }
     errs() << "\n----------------Start Impl.------------------\n\n";
-    Instruction *prevInst;
-    for (Instruction &Inst : *LBody) {
-#if 0
-      if (prevInst->getOpcode() == Instruction::GetElementPtr) {
-        // TODO: vectorize body in LBody
-        // bitcast?
-        errs() << "Prev->" << *prevInst << "\n";
-        IRBuilder<> Builder(&Inst);
-        GetElementPtrInst *Gep = cast<GetElementPtrInst>(prevInst);
-        unsigned int Addr = Gep->getType()->getPointerAddressSpace();
-        unsigned int InterleaveFactor = 4;
-        Type *ScalarTy = Gep->getType()->getPointerElementType();
-        errs() << "Scalar-> " << *ScalarTy << "\n";
-#if 0
-        //Type *ScalarTy = (cast<GetElementPtrInst>(prevInst))->getType()->getPointerElementType();
-        Type *VecTy = VectorType::get(ScalarTy, InterleaveFactor);
-        Type *PtrTy = VecTy->getPointerTo(Addr);
-        Value * Bitcast = Builder.CreateBitCast(Gep, PtrTy);
-        errs() << "Get type:" << *Bitcast << "\n";
-        errs() << "New Body-> " << *LBody << "\n";
-        break;
-#endif
+    const unsigned int InterleaveFactor = 4;
+    // use loop.inc to modify the iter.
+    ConstantInt *ConstIntVar = NULL;
+    Value *opVal = NULL;
+    int i = 0;
+    for (Instruction &Inst : *LInc) {
+      if (Inst.getOpcode() == Instruction::Add) {
+        for (auto operand = Inst.operands().begin();
+                        operand != Inst.operands().end(); ++operand) {
+          if (dyn_cast<ConstantInt>(operand)) {
+            ConstIntVar = dyn_cast<ConstantInt>(operand);
+            if (i == 1) {
+              opVal = dyn_cast<Value>((Inst.getOperand(0)));
+            } else {
+              opVal = dyn_cast<Value>((Inst.getOperand(1)));
+            }
+          }
+          i++;
+        }
+        if (ConstIntVar) {
+          uint64_t Num = ConstIntVar->getLimitedValue(~0U) * InterleaveFactor;
+          Instruction *NewIter = BinaryOperator::CreateAdd(opVal, ConstantInt::get(ConstIntVar->getType(), Num));
+          //errs() << "New instr. -> " << *NewIter << "\n";
+          ReplaceInstWithInst(&Inst, NewIter);
+          break;
+        }
       }
-#else
+    }
+    //errs() << "New loop.inc -> " << *LInc << "\n";
+    unsigned long long NumOfIter;
+    for (Instruction &Inst : *LCond) {
+      CmpInst *Cmp = dyn_cast<CmpInst>(&Inst);
+      if (Cmp) {
+        for (auto operand = Inst.operands().begin();
+                        operand != Inst.operands().end(); ++operand) {
+          if (dyn_cast<ConstantInt>(operand)) {
+            ConstIntVar = dyn_cast<ConstantInt>(operand);
+            NumOfIter = ConstIntVar->getLimitedValue(~0U);
+            break;
+          }
+        }
+      }
+    }
+    errs() << "Iter = " << NumOfIter << "\n";
+    // calc the size of tmp for $b
+    int tmpVecStoreSize = NumOfIter / InterleaveFactor;
+    //TODO
+
+    // The bit cast is done as follows
+#if 0
+    // vectorize loop body w/ bitcast
+    for (Instruction &Inst : *LBody) {
       if (Inst.getOpcode() == Instruction::GetElementPtr) {
         // TODO: vectorize body in LBody
         // bitcast?
         IRBuilder<> Builder(&Inst);
         GetElementPtrInst *Gep = cast<GetElementPtrInst>(&Inst);
         unsigned int Addr = Gep->getType()->getPointerAddressSpace();
-        unsigned int InterleaveFactor = 4;
         Type *ScalarTy = Gep->getType()->getPointerElementType();
         //Type *ScalarTy = (cast<GetElementPtrInst>(prevInst))->getType()->getPointerElementType();
         errs() << "Scalar-> " << *ScalarTy << "\n";
@@ -94,10 +125,8 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
         errs() << "New Body-> " << *LBody << "\n";
         break;
       }
-#endif
-      prevInst = &Inst;
     }
-    // TODO: modify the step in LInc
+#endif
 
   } while (!PreorderLoops.empty());
   return true;

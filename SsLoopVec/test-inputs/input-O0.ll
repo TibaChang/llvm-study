@@ -3,59 +3,55 @@ source_filename = "input.c"
 target datalayout = "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128"
 target triple = "x86_64-unknown-linux-gnu"
 
+@size = dso_local constant i32 64, align 4
 @.str = private unnamed_addr constant [18 x i8] c"\0A\0Aresult = [%d]\0A\0A\00", align 1
 
 ; Function Attrs: noinline nounwind optnone uwtable
-define dso_local i32 @foo(i32* %A, i32 %n) #0 {
+define dso_local i32 @foo(i32* %A) #0 {
 entry:
   %A.addr = alloca i32*, align 8
-  %n.addr = alloca i32, align 4
   %b = alloca i32, align 4
   %i = alloca i32, align 4
   store i32* %A, i32** %A.addr, align 8
-  store i32 %n, i32* %n.addr, align 4
   store i32 0, i32* %b, align 4
   store i32 0, i32* %i, align 4
   br label %for.cond
 
 for.cond:                                         ; preds = %for.inc, %entry
   %0 = load i32, i32* %i, align 4
-  %1 = load i32, i32* %n.addr, align 4
-  %cmp = icmp slt i32 %0, %1
+  %cmp = icmp slt i32 %0, 64
   br i1 %cmp, label %for.body, label %for.end
 
 for.body:                                         ; preds = %for.cond
-  %2 = load i32*, i32** %A.addr, align 8
-  %3 = load i32, i32* %i, align 4
-  %idxprom = sext i32 %3 to i64
-  %arrayidx = getelementptr inbounds i32, i32* %2, i64 %idxprom
-  %4 = load i32, i32* %arrayidx, align 4
-  %5 = load i32, i32* %b, align 4
-  %add = add nsw i32 %5, %4
+  %1 = load i32*, i32** %A.addr, align 8
+  %2 = load i32, i32* %i, align 4
+  %idxprom = sext i32 %2 to i64
+  %arrayidx = getelementptr inbounds i32, i32* %1, i64 %idxprom
+  %3 = load i32, i32* %arrayidx, align 4
+  %4 = load i32, i32* %b, align 4
+  %add = add nsw i32 %4, %3
   store i32 %add, i32* %b, align 4
   br label %for.inc
 
 for.inc:                                          ; preds = %for.body
-  %6 = load i32, i32* %i, align 4
-  %inc = add nsw i32 %6, 1
+  %5 = load i32, i32* %i, align 4
+  %inc = add nsw i32 %5, 1
   store i32 %inc, i32* %i, align 4
   br label %for.cond, !llvm.loop !2
 
 for.end:                                          ; preds = %for.cond
-  %7 = load i32, i32* %b, align 4
-  ret i32 %7
+  %6 = load i32, i32* %b, align 4
+  ret i32 %6
 }
 
 ; Function Attrs: noinline nounwind optnone uwtable
 define dso_local i32 @main() #0 {
 entry:
   %retval = alloca i32, align 4
-  %size = alloca i32, align 4
   %A = alloca [64 x i32], align 16
   %i = alloca i32, align 4
   %b = alloca i32, align 4
   store i32 0, i32* %retval, align 4
-  store i32 64, i32* %size, align 4
   store i32 0, i32* %i, align 4
   br label %for.cond
 
@@ -79,7 +75,7 @@ for.inc:                                          ; preds = %for.body
 
 for.end:                                          ; preds = %for.cond
   %arraydecay = getelementptr inbounds [64 x i32], [64 x i32]* %A, i64 0, i64 0
-  %call = call i32 @foo(i32* %arraydecay, i32 64)
+  %call = call i32 @foo(i32* %arraydecay)
   store i32 %call, i32* %b, align 4
   %3 = load i32, i32* %b, align 4
   %call1 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([18 x i8], [18 x i8]* @.str, i64 0, i64 0), i32 %3)
