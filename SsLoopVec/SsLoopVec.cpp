@@ -31,8 +31,8 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
   do {
     Loop &L = *PreorderLoops.pop_back_val();
     BasicBlock *Header = L.getHeader();
-    BasicBlock *LBody, *LInc, *LCond;
-    //errs() << "Header-> \n" << *Header << "\n";
+    BasicBlock *LBody, *LInc, *LCond, *LEnd;
+    LEnd = L.getExitBlock();
     // get the term. of header (2 candicates)
     Instruction *HeaderTerm = Header->getTerminator();
     for (auto operand = HeaderTerm->operands().begin();
@@ -58,6 +58,7 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
     }
     errs() << "\n----------------Start Impl.------------------\n\n";
     const unsigned int InterleaveFactor = 4;
+    // Assume the unroll factor is 1
     // use loop.inc to modify the iter.
     ConstantInt *ConstIntVar = NULL;
     Value *opVal = NULL;
@@ -103,30 +104,87 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
     errs() << "Iter = " << NumOfIter << "\n";
     // calc the size of tmp for $b
     int tmpVecStoreSize = NumOfIter / InterleaveFactor;
-    //TODO
 
-    // The bit cast is done as follows
-#if 0
-    // vectorize loop body w/ bitcast
+    Type *ScalarTy, *VecTy, *PtrTy;
+    GetElementPtrInst *Gep;
+    LoadInst *LoadCast;
     for (Instruction &Inst : *LBody) {
       if (Inst.getOpcode() == Instruction::GetElementPtr) {
-        // TODO: vectorize body in LBody
-        // bitcast?
         IRBuilder<> Builder(&Inst);
-        GetElementPtrInst *Gep = cast<GetElementPtrInst>(&Inst);
+        Gep = cast<GetElementPtrInst>(&Inst);
         unsigned int Addr = Gep->getType()->getPointerAddressSpace();
-        Type *ScalarTy = Gep->getType()->getPointerElementType();
-        //Type *ScalarTy = (cast<GetElementPtrInst>(prevInst))->getType()->getPointerElementType();
-        errs() << "Scalar-> " << *ScalarTy << "\n";
-        Type *VecTy = VectorType::get(ScalarTy, InterleaveFactor);
-        Type *PtrTy = VecTy->getPointerTo(Addr);
-        Value * Bitcast = Builder.CreateBitCast(Gep, PtrTy);
-        errs() << "Get type:" << *Bitcast << "\n";
-        errs() << "New Body-> " << *LBody << "\n";
+        ScalarTy = Gep->getType()->getPointerElementType();
+        VecTy = VectorType::get(ScalarTy, InterleaveFactor);
+        PtrTy = VecTy->getPointerTo(Addr);
+        Value *GepUser;
+        int op_cnt = 0;
+        for (auto user : Gep->users()) {
+          errs() << "gep user->" << *user << "\n";
+          GepUser = user;
+          for (auto operand = user->operands().begin();
+            operand != user->operands().end(); ++operand) {
+            if (*operand == Gep) {
+              errs() << "Found gep\n";
+              // create bitcast
+              BitCastInst *Bitcast = new BitCastInst(Gep, PtrTy);
+              Bitcast->insertAfter(Gep);
+              if (Instruction *OldLoad = dyn_cast<LoadInst>(user)) {
+                // change the load from Gep to bitcast
+                LoadCast = new LoadInst(Bitcast);
+                LoadCast->insertAfter(Bitcast);
+                break;
+              }
+            }
+            op_cnt++;
+          }
+        }
         break;
       }
     }
-#endif
+    // create alloca for b[4]
+    IRBuilder<> AllocaBuilder(F.getEntryBlock().getFirstNonPHI());
+    AllocaInst *AllocaTmp;
+    AllocaTmp = AllocaBuilder.CreateAlloca(VecTy);
+    StoreInst *StoreTmp = new StoreInst((Value*)(ConstantInt::get(VecTy, 0)), AllocaTmp);
+    StoreTmp->insertAfter(AllocaTmp);
+    errs() << "New F Entry-> " << (F.getEntryBlock()) << "\n";
+    // Load vec AllocaTmp as LoadAllocaTmp
+    Instruction *LoadAllocaTmp = new LoadInst(AllocaTmp);
+    LoadAllocaTmp->insertAfter(LoadCast);
+    // add LoadCast & LoadAllocaTmp as VecTmpSum
+    Instruction *VecTmpSum = BinaryOperator::CreateAdd(LoadAllocaTmp, LoadCast);
+    VecTmpSum->insertAfter(LoadAllocaTmp);
+    // store VecTmpSum back to AllocaTmp
+    StoreInst *StoreTmpBack = new StoreInst((Value*)VecTmpSum, AllocaTmp);
+    StoreTmpBack->insertAfter(VecTmpSum);
+    LoadInst *LoadAllocaTmp2 = new LoadInst(AllocaTmp);
+    LoadAllocaTmp2->insertAfter(StoreTmpBack); // useless, only for right loc.
+    IRBuilder<> ExtractBuilder(LoadAllocaTmp2);
+    Value *ExtractTmps[4];
+    Instruction *ExtractSums[2];
+    for (uint64_t i = 0; i < InterleaveFactor; i++) {
+      ExtractTmps[i] = ExtractBuilder.CreateExtractElement(VecTmpSum, i);
+      if ((i%2) == 1) {
+        Instruction *SumTmp = BinaryOperator::CreateAdd(ExtractTmps[i-1], ExtractTmps[i]);
+        SumTmp->insertAfter((Instruction *)ExtractTmps[i]);
+        ExtractSums[i/2] = SumTmp;
+      }
+    }
+    Instruction *FinalSum = BinaryOperator::CreateAdd(ExtractSums[0], ExtractSums[1]);
+    FinalSum->insertAfter(ExtractSums[1]);
+    // store the result
+    LoadInst *LoadFinal;
+    for (Instruction &Inst : *LEnd) {
+      LoadFinal = dyn_cast<LoadInst>(&Inst);
+      if (LoadFinal) {
+        break;
+      }
+    }
+    StoreInst *StoreFinalBack = new StoreInst((Value*)FinalSum, LoadFinal->getOperand(0));
+    StoreFinalBack->insertAfter(FinalSum);
+    errs() << "New End-> " << *LEnd << "\n";
+    //TODO: cleanup: the users of original scalar inst. or from StoreTmpBack to term. of for.body
+    errs() << "New Body-> " << *LBody << "\n";
 
   } while (!PreorderLoops.empty());
   return true;
