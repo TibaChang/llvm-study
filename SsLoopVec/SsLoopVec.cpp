@@ -172,6 +172,14 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
     }
     Instruction *FinalSum = BinaryOperator::CreateAdd(ExtractSums[0], ExtractSums[1]);
     FinalSum->insertAfter(ExtractSums[1]);
+    errs() << "New End-> " << *LEnd << "\n";
+    Instruction *prevLastInst;
+    for (Instruction &Inst : *LBody) {
+      if (Inst.getOpcode() == Instruction::Br) {
+        break;
+      }
+      prevLastInst = &Inst;
+    }
     // store the result
     LoadInst *LoadFinal;
     for (Instruction &Inst : *LEnd) {
@@ -181,9 +189,9 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
       }
     }
     StoreInst *StoreFinalBack = new StoreInst((Value*)FinalSum, LoadFinal->getOperand(0));
-    StoreFinalBack->insertAfter(FinalSum);
-    errs() << "New End-> " << *LEnd << "\n";
+    StoreFinalBack->insertAfter(prevLastInst);
     //TODO: cleanup: the users of original scalar inst. or from StoreTmpBack to term. of for.body
+    //cleanup from LoadAllocaTmp2 to StoreFinalBack
     errs() << "New Body-> " << *LBody << "\n";
 
   } while (!PreorderLoops.empty());
