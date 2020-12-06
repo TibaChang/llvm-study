@@ -51,12 +51,8 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
     LCond = dyn_cast<BasicBlock>(IncTerm->getOperand(0));
     if (!LBody || !LInc || !LCond) {
       return false;
-    } else {
-        errs() << "Cond-> " << *LCond << "\n";
-        errs() << "Body-> " << *LBody << "\n";
-        errs() << "Inc-> " << *LInc << "\n";
     }
-    errs() << "\n----------------Start Impl.------------------\n\n";
+    LLVM_DEBUG(dbgs() << "\n----------------Start Impl.------------------\n");
     const unsigned int InterleaveFactor = 4;
     // Assume the unroll factor is 1
     // use loop.inc to modify the iter.
@@ -80,13 +76,11 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
         if (ConstIntVar) {
           uint64_t Num = ConstIntVar->getLimitedValue(~0U) * InterleaveFactor;
           Instruction *NewIter = BinaryOperator::CreateAdd(opVal, ConstantInt::get(ConstIntVar->getType(), Num));
-          //errs() << "New instr. -> " << *NewIter << "\n";
           ReplaceInstWithInst(&Inst, NewIter);
           break;
         }
       }
     }
-    //errs() << "New loop.inc -> " << *LInc << "\n";
     unsigned long long NumOfIter;
     for (Instruction &Inst : *LCond) {
       CmpInst *Cmp = dyn_cast<CmpInst>(&Inst);
@@ -101,7 +95,6 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
         }
       }
     }
-    errs() << "Iter = " << NumOfIter << "\n";
     // calc the size of tmp for $b
     int tmpVecStoreSize = NumOfIter / InterleaveFactor;
 
@@ -119,12 +112,10 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
         Value *GepUser;
         int op_cnt = 0;
         for (auto user : Gep->users()) {
-          errs() << "gep user->" << *user << "\n";
           GepUser = user;
           for (auto operand = user->operands().begin();
             operand != user->operands().end(); ++operand) {
             if (*operand == Gep) {
-              errs() << "Found gep\n";
               // create bitcast
               BitCastInst *Bitcast = new BitCastInst(Gep, PtrTy);
               Bitcast->insertAfter(Gep);
@@ -147,7 +138,6 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
     AllocaTmp = AllocaBuilder.CreateAlloca(VecTy);
     StoreInst *StoreTmp = new StoreInst((Value*)(ConstantInt::get(VecTy, 0)), AllocaTmp);
     StoreTmp->insertAfter(AllocaTmp);
-    errs() << "New F Entry-> " << (F.getEntryBlock()) << "\n";
     // Load vec AllocaTmp as LoadAllocaTmp
     Instruction *LoadAllocaTmp = new LoadInst(AllocaTmp);
     LoadAllocaTmp->insertAfter(LoadCast);
@@ -174,26 +164,6 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
     for (auto it = (InstToRemoveVec.end() - 1) ; it >= InstToRemoveVec.begin(); --it) {
       (*it)->eraseFromParent();
     }
-#if 0
-    // store the tmps in loop.body
-    Instruction *prevLastInst;
-    for (Instruction &Inst : *LBody) {
-      if (Inst.getOpcode() == Instruction::Br) {
-        break;
-      }
-      prevLastInst = &Inst;
-    }
-    LoadInst *LoadFinal;
-    for (Instruction &Inst : *LEnd) {
-      LoadFinal = dyn_cast<LoadInst>(&Inst);
-      if (LoadFinal) {
-        break;
-      }
-    }
-    StoreInst *StoreFinalBack = new StoreInst((Value*)FinalSum, LoadFinal->getOperand(0));
-    StoreFinalBack->insertAfter(prevLastInst);
-#endif
-    errs() << "New Body-> " << *LBody << "\n";
     LoadInst *LoadFinal;
     for (Instruction &Inst : *LEnd) {
       LoadFinal = dyn_cast<LoadInst>(&Inst);
@@ -219,7 +189,8 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
     // store the the orig
     StoreInst *StoreFinalBack = new StoreInst((Value*)FinalSum, LoadFinal->getOperand(0));
     StoreFinalBack->insertAfter(FinalSum);
-    errs() << "New End-> " << *LEnd << "\n";
+    LLVM_DEBUG(dbgs() << "New L.Body" << *LBody << "\n");
+    LLVM_DEBUG(dbgs() << "New L.End" << *LEnd << "\n");
   } while (!PreorderLoops.empty());
   return true;
 }
