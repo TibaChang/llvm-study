@@ -1,4 +1,4 @@
-SsInline - Super simple Inline Pass
+SsSCCP - Super simple Inline Pass
 =======================================
 This Pass implements a simple pass to do SCCP in **foo** function.
 

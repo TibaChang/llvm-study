@@ -190,8 +190,23 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
     }
     StoreInst *StoreFinalBack = new StoreInst((Value*)FinalSum, LoadFinal->getOperand(0));
     StoreFinalBack->insertAfter(prevLastInst);
-    //TODO: cleanup: the users of original scalar inst. or from StoreTmpBack to term. of for.body
     //cleanup from LoadAllocaTmp2 to StoreFinalBack
+    bool bStartToRemove = false;
+    SmallVector<Instruction *, 10> InstToRemoveVec;
+    for (Instruction &Inst : *LBody) {
+      if (&Inst == LoadAllocaTmp2) {
+        bStartToRemove = true;
+      }
+      if (&Inst == StoreFinalBack) {
+        break;
+      }
+      if (bStartToRemove) {
+        InstToRemoveVec.push_back(&Inst);
+      }
+    }
+    for (auto it = (InstToRemoveVec.end() - 1) ; it >= InstToRemoveVec.begin(); --it) {
+      (*it)->eraseFromParent();
+    }
     errs() << "New Body-> " << *LBody << "\n";
 
   } while (!PreorderLoops.empty());
