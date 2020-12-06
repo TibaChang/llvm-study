@@ -157,22 +157,25 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
     // store VecTmpSum back to AllocaTmp
     StoreInst *StoreTmpBack = new StoreInst((Value*)VecTmpSum, AllocaTmp);
     StoreTmpBack->insertAfter(VecTmpSum);
-    LoadInst *LoadAllocaTmp2 = new LoadInst(AllocaTmp);
-    LoadAllocaTmp2->insertAfter(StoreTmpBack); // useless, only for right loc.
-    IRBuilder<> ExtractBuilder(LoadAllocaTmp2);
-    Value *ExtractTmps[4];
-    Instruction *ExtractSums[2];
-    for (uint64_t i = 0; i < InterleaveFactor; i++) {
-      ExtractTmps[i] = ExtractBuilder.CreateExtractElement(VecTmpSum, i);
-      if ((i%2) == 1) {
-        Instruction *SumTmp = BinaryOperator::CreateAdd(ExtractTmps[i-1], ExtractTmps[i]);
-        SumTmp->insertAfter((Instruction *)ExtractTmps[i]);
-        ExtractSums[i/2] = SumTmp;
+    // cleanup
+    bool bStartToRemove = false;
+    SmallVector<Instruction *, 10> InstToRemoveVec;
+    for (Instruction &Inst : *LBody) {
+      if (&Inst == LBody->getTerminator()) {
+        break;
+      }
+      if (bStartToRemove) {
+        InstToRemoveVec.push_back(&Inst);
+      }
+      if (&Inst == StoreTmpBack) {
+        bStartToRemove = true;
       }
     }
-    Instruction *FinalSum = BinaryOperator::CreateAdd(ExtractSums[0], ExtractSums[1]);
-    FinalSum->insertAfter(ExtractSums[1]);
-    errs() << "New End-> " << *LEnd << "\n";
+    for (auto it = (InstToRemoveVec.end() - 1) ; it >= InstToRemoveVec.begin(); --it) {
+      (*it)->eraseFromParent();
+    }
+#if 0
+    // store the tmps in loop.body
     Instruction *prevLastInst;
     for (Instruction &Inst : *LBody) {
       if (Inst.getOpcode() == Instruction::Br) {
@@ -180,7 +183,6 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
       }
       prevLastInst = &Inst;
     }
-    // store the result
     LoadInst *LoadFinal;
     for (Instruction &Inst : *LEnd) {
       LoadFinal = dyn_cast<LoadInst>(&Inst);
@@ -190,25 +192,34 @@ bool SsLoopVec::DoImpl(llvm::Function &F, llvm::LoopInfo &LI) {
     }
     StoreInst *StoreFinalBack = new StoreInst((Value*)FinalSum, LoadFinal->getOperand(0));
     StoreFinalBack->insertAfter(prevLastInst);
-    //cleanup from LoadAllocaTmp2 to StoreFinalBack
-    bool bStartToRemove = false;
-    SmallVector<Instruction *, 10> InstToRemoveVec;
-    for (Instruction &Inst : *LBody) {
-      if (&Inst == LoadAllocaTmp2) {
-        bStartToRemove = true;
-      }
-      if (&Inst == StoreFinalBack) {
+#endif
+    errs() << "New Body-> " << *LBody << "\n";
+    LoadInst *LoadFinal;
+    for (Instruction &Inst : *LEnd) {
+      LoadFinal = dyn_cast<LoadInst>(&Inst);
+      if (LoadFinal) {
         break;
       }
-      if (bStartToRemove) {
-        InstToRemoveVec.push_back(&Inst);
+    }
+    // sum the results
+    IRBuilder<> ExtractBuilder(LEnd->getFirstNonPHI());
+    Instruction *LoadVecTmp = ExtractBuilder.CreateLoad(VecTy, AllocaTmp);
+    Value *ExtractTmps[4];
+    Instruction *ExtractSums[2];
+    for (uint64_t i = 0; i < InterleaveFactor; i++) {
+      ExtractTmps[i] = ExtractBuilder.CreateExtractElement(LoadVecTmp, i);
+      if ((i%2) == 1) {
+        Instruction *SumTmp = BinaryOperator::CreateAdd(ExtractTmps[i-1], ExtractTmps[i]);
+        SumTmp->insertAfter((Instruction *)ExtractTmps[i]);
+        ExtractSums[i/2] = SumTmp;
       }
     }
-    for (auto it = (InstToRemoveVec.end() - 1) ; it >= InstToRemoveVec.begin(); --it) {
-      (*it)->eraseFromParent();
-    }
-    errs() << "New Body-> " << *LBody << "\n";
-
+    Instruction *FinalSum = BinaryOperator::CreateAdd(ExtractSums[0], ExtractSums[1]);
+    FinalSum->insertAfter(ExtractSums[1]);
+    // store the the orig
+    StoreInst *StoreFinalBack = new StoreInst((Value*)FinalSum, LoadFinal->getOperand(0));
+    StoreFinalBack->insertAfter(FinalSum);
+    errs() << "New End-> " << *LEnd << "\n";
   } while (!PreorderLoops.empty());
   return true;
 }
